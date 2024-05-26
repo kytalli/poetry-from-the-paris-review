@@ -38,14 +38,20 @@ class Poem:
         data = json.loads(json_str)
         return cls(**data)
     
-    def save_poem_to_file(poem, filename):
-        """Saves the poem JSON to a file."""
-        with open(filename, 'w') as f:
+    @staticmethod
+    def save_poem_to_file(poem, filename, directory="saved_poems"):
+        """Saves the poem JSON to a file in a specified directory. Creates the directory if it doesn't exist."""
+        if not os.path.exists(directory):
+            os.makedirs(directory)  # Create the directory if it does not exist
+        file_path = os.path.join(directory, filename)
+        with open(file_path, 'w') as f:
             f.write(poem.to_json())
 
-    def load_poem_from_file(filename):
-        """Loads a poem JSON from a file and returns a Poem object."""
-        with open(filename, 'r') as f:
+    @staticmethod
+    def load_poem_from_file(filename, directory="saved_poems"):
+        """Loads a poem JSON from a file within a specified directory and returns a Poem object."""
+        file_path = os.path.join(directory, filename)
+        with open(file_path, 'r') as f:
             json_str = f.read()
         return Poem.from_json(json_str)
 
@@ -103,8 +109,6 @@ def parse_subject(subject):
     Returns:
         tuple: Returns a tuple containing the poem title and author's name.
     """
-    print("debug: examining subject ->", repr(subject))
-    
     # Primary pattern
     primary_pattern = r'“(.+?),”\s*(.+)'
     match = re.search(primary_pattern, subject)
@@ -121,7 +125,6 @@ def parse_subject(subject):
             poem_title = match.group(1)  # This captures the title inside the nested quotes
             author_name = match.group(3)
             poem_title = poem_title.replace("‘", '“').replace("’", '”').replace(",", "")
-            print(poem_title)
             return poem_title, author_name
         else:
             return None, None
@@ -188,97 +191,77 @@ def extract_text_from_html(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
     return soup.get_text()
 
-
-# Define the required scopes
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-
-def show_chatty_threads():
-    """Display threads with long conversations (>= 3 messages)
-    Return: None
-
-    Load pre-authorized user credentials from the environment.
-    TODO(developer) - See https://developers.google.com/identity
-    for guides on implementing OAuth2 for the application.
-    """
-    creds = None
-    logging.debug("Starting show_chatty_threads")
-
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
+def setup_gmail_client():
+    SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+    logging.debug("Starting setup_gmail_client")
     if os.path.exists('token.json'):
         logging.debug("token.json found")
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     else:
         logging.error("token.json not found")
-        return
+        return None
 
     try:
-        # Create Gmail API client
-        logging.debug("Building Gmail API client")
         service = build("gmail", "v1", credentials=creds)
-        threads = []
-        page_token = None
-        query = 'from:newsletter@theparisreview.org after:1714521600 before:1716412800'
-        logging.debug(f"Query: {query}")
+        logging.debug("Gmail API client built successfully")
+        return service
+    except Exception as e:
+        logging.error(f"Failed to build Gmail API client: {str(e)}")
+        return None
 
+def fetch_threads(service, query):
+    logging.debug(f"Fetching threads with query: {query}")
+    threads = []
+    page_token = None
+    try:
         while True:
-            logging.debug(f"Fetching threads with pageToken: {page_token}")
-            response = service.users().threads().list(
-                userId="me", 
-                pageToken=page_token, 
-                q=query
-            ).execute()
+            response = service.users().threads().list(userId="me", pageToken=page_token, q=query).execute()
             fetched_threads = response.get("threads", [])
-            logging.debug(f"Fetched {len(fetched_threads)} threads")
             threads.extend(fetched_threads)
             page_token = response.get("nextPageToken")
             if not page_token:
-                logging.debug("No more pages to fetch")
                 break
-
-        poems = []  # List to store Poem objects
-        for thread in threads:
-            logging.debug(f"Processing thread ID: {thread['id']}")
-            tdata = (
-                service.users().threads().get(userId="me", id=thread["id"]).execute()
-            )
-            nmsgs = len(tdata["messages"])
-            logging.debug(f"Thread ID: {thread['id']} has {nmsgs} messages")
-
-            for message in tdata["messages"]:
-                msg_id = message["id"]
-                message_detail = service.users().messages().get(userId="me", id=msg_id).execute()
-                message_content, subject, sent_date = get_message_content(message)
-                poem_title, author_name = parse_subject(subject)
-                if poem_title and author_name:
-                    print("Poem Title:", poem_title)
-                    print("Author Name:", author_name)
-                else:
-                    print("Failed to parse subject")    
-                poem_body, poem_issue = extract_poem_details(message_content, poem_title)
-                if poem_body and poem_issue:
-                    print("poem body:", poem_body)
-                    print("poem issue:", poem_issue)
-                    # Create a Poem object and add it to the list
-                    poem = Poem(poem_title, author_name, poem_body, poem_issue, sent_date, msg_id)
-                    poems.append(poem)
-                    filename = f"{author_name}_{poem_title}"
-                    poem.save_poem_to_file
-
-                else:
-                    print("Failed to extract poem details")
-            else:
-                print("Failed to parse subject")
-
-
-        logging.debug("Completed show_chatty_threads")
+        logging.debug("Fetched threads successfully")
         return threads
+    except Exception as e:
+        logging.error(f"Error fetching threads: {str(e)}")
+        return []
     
-    except HttpError as error:
-        logging.error(f"An error occurred: {error}")
+def process_messages(service, threads):
+    poems = []
+    for thread in threads:
+        logging.debug(f"Processing thread ID: {thread['id']}")
+        tdata = service.users().threads().get(userId="me", id=thread["id"]).execute()
+        for message in tdata["messages"]:
+            msg_id = message["id"]
+            message_content, subject, sent_date = get_message_content(message)
+            poem_title, author_name = parse_subject(subject)
+            poem_body, poem_issue = extract_poem_details(message_content, poem_title)
 
+            if poem_title and author_name and poem_body and poem_issue:
+                poem = Poem(poem_title, author_name, poem_body, poem_issue, sent_date, msg_id)
+                filename = f"{author_name}_{poem_title}.json"
+                poem.save_poem_to_file(poem, filename)
+                print(f"saved {filename}!")
+                poems.append(poem)
+                logging.debug(f"Processed and saved poem: {poem_title}")
+            else:
+                logging.error("Failed to process message properly")
+    return poems
 
+def main():
+    logging.debug("Starting main function")
+    service = setup_gmail_client()
+    if service:
+        query = 'from:newsletter@theparisreview.org after:1714521600 before:1716412800'
+        threads = fetch_threads(service, query)
+        if threads:
+            poems = process_messages(service, threads)
+            logging.debug(f"Processed {len(poems)} poems")
+        else:
+            logging.debug("No threads fetched")
+    else:
+        logging.error("Gmail service setup failed")
 
 if __name__ == "__main__":
-    show_chatty_threads()
+    main()
