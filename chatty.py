@@ -9,6 +9,7 @@ import re
 import attr
 import json
 from datetime import datetime
+from poem_utils import Poem
 
 # Set up logging to file
 log_filename = 'gmail_threads.log'
@@ -18,43 +19,6 @@ logging.basicConfig(
     filename=log_filename,
     filemode='w'  # 'w' for write mode, 'a' for append mode
 )
-
-@attr.s
-class Poem:
-    title = attr.ib()
-    author = attr.ib()
-    body = attr.ib()
-    issue = attr.ib()
-    sent_date = attr.ib()
-    msg_id = attr.ib()
-
-    def to_json(self):
-        """Converts the Poem object into a JSON string."""
-        return json.dumps(attr.asdict(self), indent=4)
-
-    @classmethod
-    def from_json(cls, json_str):
-        """Creates a Poem object from a JSON string."""
-        data = json.loads(json_str)
-        return cls(**data)
-    
-    @staticmethod
-    def save_poem_to_file(poem, filename, directory="saved_poems"):
-        """Saves the poem JSON to a file in a specified directory. Creates the directory if it doesn't exist."""
-        if not os.path.exists(directory):
-            os.makedirs(directory)  # Create the directory if it does not exist
-        file_path = os.path.join(directory, filename)
-        with open(file_path, 'w') as f:
-            f.write(poem.to_json())
-
-    @staticmethod
-    def load_poem_from_file(filename, directory="saved_poems"):
-        """Loads a poem JSON from a file within a specified directory and returns a Poem object."""
-        file_path = os.path.join(directory, filename)
-        with open(file_path, 'r') as f:
-            json_str = f.read()
-        return Poem.from_json(json_str)
-
 
 def get_message_content(message):
     """Extract and decode the message content, subject, and fetch the sent date."""
