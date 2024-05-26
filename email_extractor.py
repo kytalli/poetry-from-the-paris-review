@@ -8,7 +8,7 @@ from googleapiclient.errors import HttpError
 import re
 import attr
 import json
-from datetime import datetime
+import datetime
 from poem_utils import Poem
 
 # Set up logging to file
@@ -73,6 +73,7 @@ def parse_subject(subject):
     Returns:
         tuple: Returns a tuple containing the poem title and author's name.
     """
+    print("debug subject:", repr(subject))
     # Primary pattern
     primary_pattern = r'“(.+?),”\s*(.+)'
     match = re.search(primary_pattern, subject)
@@ -200,24 +201,33 @@ def process_messages(service, threads):
             msg_id = message["id"]
             message_content, subject, sent_date = get_message_content(message)
             poem_title, author_name = parse_subject(subject)
-            poem_body, poem_issue = extract_poem_details(message_content, poem_title)
+            try:
+                poem_body, poem_issue = extract_poem_details(message_content, poem_title)
+            except Exception as e:
+                logging.error(f"Failed to extract poem details for message ID {msg_id}: {e}")
+            continue
 
-            if poem_title and author_name and poem_body and poem_issue:
-                poem = Poem(poem_title, author_name, poem_body, poem_issue, sent_date, msg_id)
-                filename = f"{author_name}_{poem_title}.json"
-                poem.save_poem_to_file(poem, filename)
-                print(f"saved {filename}!")
-                poems.append(poem)
-                logging.debug(f"Processed and saved poem: {poem_title}")
-            else:
-                logging.error("Failed to process message properly")
+        if poem_title and author_name and poem_body and poem_issue:
+            poem = Poem(poem_title, author_name, poem_body, poem_issue, sent_date, msg_id)
+            filename = f"{author_name}_{poem_title}.json"
+            poem.save_poem_to_file(poem, filename)
+            print(f"saved {filename}!")
+            poems.append(poem)
+            logging.debug(f"Processed and saved poem: {poem_title}")
+        else:
+            logging.error("Failed to process message properly")
     return poems
+
+def unix_time(year, month, day):
+    return int(datetime.datetime(year, month, day, 0, 0).timestamp())
 
 def main():
     logging.debug("Starting main function")
+    start_date = unix_time(2024, 5, 1)  # May 1st, 2024
+    end_date = unix_time(2024, 5, 27)   # May 27th, 2024 to include all of May 26th
     service = setup_gmail_client()
     if service:
-        query = 'from:newsletter@theparisreview.org after:1714521600 before:1716412800'
+        query = f'from:newsletter@theparisreview.org after:{start_date} before:{end_date}'
         threads = fetch_threads(service, query)
         if threads:
             poems = process_messages(service, threads)
